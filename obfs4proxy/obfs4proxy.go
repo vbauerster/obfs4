@@ -57,52 +57,64 @@ const (
 var stateDir string
 var termMon *termMonitor
 
-func clientSetup() (launched bool, listeners []net.Listener) {
+func clientSetup() (listeners []net.Listener, err error) {
+	okCh := make(chan bool)
+	defer func() {
+		if err != nil {
+			close(okCh)
+		} else {
+			for range listeners {
+				okCh <- true
+			}
+			pt.CmethodsDone()
+		}
+	}()
+
 	ptClientInfo, err := pt.ClientSetup(transports.Transports())
 	if err != nil {
-		golog.Fatal(err)
+		return listeners, err
 	}
 
 	ptClientProxy, err := ptGetProxy()
 	if err != nil {
-		golog.Fatal(err)
+		return listeners, err
 	} else if ptClientProxy != nil {
 		ptProxyDone()
 	}
 
 	// Launch each of the client listeners.
 	for _, name := range ptClientInfo.MethodNames {
-		t := transports.Get(name)
-		if t == nil {
-			_ = pt.CmethodError(name, "no such transport is supported")
-			continue
+		t, err := transports.Get(name)
+		if err != nil {
+			_ = pt.CmethodError(name, err.Error())
+			return listeners, err
 		}
 
 		f, err := t.ClientFactory(stateDir)
 		if err != nil {
-			_ = pt.CmethodError(name, "failed to get ClientFactory")
-			continue
+			_ = pt.CmethodError(name, err.Error())
+			return listeners, err
 		}
 
 		ln, err := net.Listen("tcp", socksAddr)
 		if err != nil {
 			_ = pt.CmethodError(name, err.Error())
-			continue
+			return listeners, err
 		}
 
+		pt.Cmethod(name, socks5.Version(), ln.Addr())
+		log.Infof("%s - registered listener: %s", name, ln.Addr())
+		listeners = append(listeners, ln)
+
 		go func() {
+			if ok := <-okCh; !ok {
+				return
+			}
 			_ = clientAcceptLoop(f, ln, ptClientProxy)
 		}()
-		pt.Cmethod(name, socks5.Version(), ln.Addr())
-
-		log.Infof("%s - registered listener: %s", name, ln.Addr())
-
-		listeners = append(listeners, ln)
-		launched = true
 	}
-	pt.CmethodsDone()
 
-	return
+	return listeners, nil
 }
 
 func clientAcceptLoop(f base.ClientFactory, ln net.Listener, proxyURI *url.URL) error {
@@ -175,35 +187,44 @@ func clientHandler(f base.ClientFactory, conn net.Conn, proxyURI *url.URL) {
 	}
 }
 
-func serverSetup() (launched bool, listeners []net.Listener) {
+func serverSetup() (listeners []net.Listener, err error) {
+	okCh := make(chan bool)
+	defer func() {
+		if err != nil {
+			close(okCh)
+		} else {
+			for range listeners {
+				okCh <- true
+			}
+			pt.SmethodsDone()
+		}
+	}()
+
 	ptServerInfo, err := pt.ServerSetup(transports.Transports())
 	if err != nil {
-		golog.Fatal(err)
+		return listeners, err
 	}
 
 	for _, bindaddr := range ptServerInfo.Bindaddrs {
 		name := bindaddr.MethodName
-		t := transports.Get(name)
-		if t == nil {
-			_ = pt.SmethodError(name, "no such transport is supported")
-			continue
+		t, err := transports.Get(name)
+		if err != nil {
+			_ = pt.SmethodError(name, err.Error())
+			return listeners, err
 		}
 
 		f, err := t.ServerFactory(stateDir, &bindaddr.Options)
 		if err != nil {
 			_ = pt.SmethodError(name, err.Error())
-			continue
+			return listeners, err
 		}
 
 		ln, err := net.ListenTCP("tcp", bindaddr.Addr)
 		if err != nil {
 			_ = pt.SmethodError(name, err.Error())
-			continue
+			return listeners, err
 		}
 
-		go func() {
-			_ = serverAcceptLoop(f, ln, &ptServerInfo)
-		}()
 		if args := f.Args(); args != nil {
 			pt.SmethodArgs(name, ln.Addr(), *args)
 		} else {
@@ -211,13 +232,17 @@ func serverSetup() (launched bool, listeners []net.Listener) {
 		}
 
 		log.Infof("%s - registered listener: %s", name, log.ElideAddr(ln.Addr().String()))
-
 		listeners = append(listeners, ln)
-		launched = true
-	}
-	pt.SmethodsDone()
 
-	return
+		go func() {
+			if ok := <-okCh; !ok {
+				return
+			}
+			_ = serverAcceptLoop(f, ln, &ptServerInfo)
+		}()
+	}
+
+	return listeners, nil
 }
 
 func serverAcceptLoop(f base.ServerFactory, ln net.Listener, info *pt.ServerInfo) error {
@@ -315,7 +340,6 @@ func main() {
 
 	// Determine if this is a client or server, initialize the common state.
 	var ptListeners []net.Listener
-	var launched bool
 	isClient, err := ptIsClient()
 	if err != nil {
 		golog.Fatalf("[ERROR]: %s - must be run as a managed transport", execName)
@@ -336,14 +360,14 @@ func main() {
 	// Do the managed pluggable transport protocol configuration.
 	if isClient {
 		log.Infof("%s - initializing client transport listeners", execName)
-		launched, ptListeners = clientSetup()
+		ptListeners, err = clientSetup()
 	} else {
 		log.Infof("%s - initializing server transport listeners", execName)
-		launched, ptListeners = serverSetup()
+		ptListeners, err = serverSetup()
 	}
-	if !launched {
-		// Initialization failed, the client or server setup routines should
-		// have logged, so just exit here.
+	if err != nil {
+		// Initialization failed
+		log.Errorf("%s - failed to initialize listeners: %s", execName, err)
 		os.Exit(-1)
 	}
 

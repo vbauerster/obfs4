@@ -30,6 +30,7 @@
 package transports // import "gitlab.com/yawning/obfs4.git/transports"
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
@@ -52,7 +53,7 @@ func Register(transport base.Transport) error {
 	name := transport.Name()
 	_, registered := transportMap[name]
 	if registered {
-		return fmt.Errorf("transport '%s' already registered", name)
+		return fmt.Errorf("transport %q already registered", name)
 	}
 	transportMap[name] = transport
 
@@ -73,13 +74,15 @@ func Transports() []string {
 }
 
 // Get returns a transport protocol implementation by name.
-func Get(name string) base.Transport {
+func Get(name string) (base.Transport, error) {
 	transportMapLock.Lock()
 	defer transportMapLock.Unlock()
 
 	t := transportMap[name]
-
-	return t
+	if t == nil {
+		return nil, errors.New("no such transport is supported")
+	}
+	return t, nil
 }
 
 // Init initializes all of the integrated transports.
