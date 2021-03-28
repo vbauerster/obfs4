@@ -73,15 +73,15 @@ func clientSetup() (launched bool, listeners []net.Listener) {
 
 	// Launch each of the client listeners.
 	for _, name := range ptClientInfo.MethodNames {
-		t := transports.Get(name)
-		if t == nil {
-			_ = pt.CmethodError(name, "no such transport is supported")
+		t, err := transports.Get(name)
+		if err != nil {
+			_ = pt.CmethodError(name, err.Error())
 			continue
 		}
 
 		f, err := t.ClientFactory(stateDir)
 		if err != nil {
-			_ = pt.CmethodError(name, "failed to get ClientFactory")
+			_ = pt.CmethodError(name, err.Error())
 			continue
 		}
 
@@ -91,17 +91,19 @@ func clientSetup() (launched bool, listeners []net.Listener) {
 			continue
 		}
 
+		pt.Cmethod(name, socks5.Version(), ln.Addr())
+		log.Infof("%s - registered listener: %s", name, ln.Addr())
+		listeners = append(listeners, ln)
+		launched = true
+
 		go func() {
 			_ = clientAcceptLoop(f, ln, ptClientProxy)
 		}()
-		pt.Cmethod(name, socks5.Version(), ln.Addr())
-
-		log.Infof("%s - registered listener: %s", name, ln.Addr())
-
-		listeners = append(listeners, ln)
-		launched = true
 	}
-	pt.CmethodsDone()
+
+	if launched {
+		pt.CmethodsDone()
+	}
 
 	return
 }
@@ -184,9 +186,9 @@ func serverSetup() (launched bool, listeners []net.Listener) {
 
 	for _, bindaddr := range ptServerInfo.Bindaddrs {
 		name := bindaddr.MethodName
-		t := transports.Get(name)
-		if t == nil {
-			_ = pt.SmethodError(name, "no such transport is supported")
+		t, err := transports.Get(name)
+		if err != nil {
+			_ = pt.SmethodError(name, err.Error())
 			continue
 		}
 
@@ -202,9 +204,6 @@ func serverSetup() (launched bool, listeners []net.Listener) {
 			continue
 		}
 
-		go func() {
-			_ = serverAcceptLoop(f, ln, &ptServerInfo)
-		}()
 		if args := f.Args(); args != nil {
 			pt.SmethodArgs(name, ln.Addr(), *args)
 		} else {
@@ -212,11 +211,17 @@ func serverSetup() (launched bool, listeners []net.Listener) {
 		}
 
 		log.Infof("%s - registered listener: %s", name, log.ElideAddr(ln.Addr().String()))
-
 		listeners = append(listeners, ln)
 		launched = true
+
+		go func() {
+			_ = serverAcceptLoop(f, ln, &ptServerInfo)
+		}()
 	}
-	pt.SmethodsDone()
+
+	if launched {
+		pt.SmethodsDone()
+	}
 
 	return
 }
@@ -339,7 +344,7 @@ func main() {
 	}
 	if err = transports.Init(); err != nil {
 		log.Errorf("%s - failed to initialize transports: %s", execName, err)
-		os.Exit(-1)
+		os.Exit(1)
 	}
 
 	log.Noticef("%s - launched", getVersion())
@@ -355,7 +360,7 @@ func main() {
 	if !launched {
 		// Initialization failed, the client or server setup routines should
 		// have logged, so just exit here.
-		os.Exit(-1)
+		os.Exit(1)
 	}
 
 	log.Infof("%s - accepting connections", execName)
