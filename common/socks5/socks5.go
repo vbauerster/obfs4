@@ -268,22 +268,22 @@ func (req *Request) readCommand() error {
 
 	// Read the destination address/port.
 	var atyp byte
-	var host string
 	if atyp, err = req.readByte(); err != nil {
 		_ = req.Reply(ReplyGeneralFailure)
 		return err
 	}
+	var host string
 	switch atyp {
 	case atypIPv4:
-		var addr []byte
-		if addr, err = req.readBytes(net.IPv4len); err != nil {
+		addr := make([]byte, net.IPv4len)
+		if _, err = req.readFull(addr); err != nil {
 			_ = req.Reply(ReplyGeneralFailure)
 			return err
 		}
 		host = net.IPv4(addr[0], addr[1], addr[2], addr[3]).String()
 	case atypDomainName:
-		var alen byte
-		if alen, err = req.readByte(); err != nil {
+		alen, err := req.readByte()
+		if err != nil {
 			_ = req.Reply(ReplyGeneralFailure)
 			return err
 		}
@@ -291,27 +291,25 @@ func (req *Request) readCommand() error {
 			_ = req.Reply(ReplyGeneralFailure)
 			return fmt.Errorf("domain name with 0 length")
 		}
-		var addr []byte
-		if addr, err = req.readBytes(int(alen)); err != nil {
+		addr := make([]byte, alen)
+		if _, err = req.readFull(addr); err != nil {
 			_ = req.Reply(ReplyGeneralFailure)
 			return err
 		}
 		host = string(addr)
 	case atypIPv6:
-		var rawAddr []byte
-		if rawAddr, err = req.readBytes(net.IPv6len); err != nil {
+		rawAddr := make([]byte, net.IPv6len)
+		if _, err = req.readFull(rawAddr); err != nil {
 			_ = req.Reply(ReplyGeneralFailure)
 			return err
 		}
-		addr := make(net.IP, net.IPv6len)
-		copy(addr[:], rawAddr[:])
-		host = fmt.Sprintf("[%s]", addr.String())
+		host = fmt.Sprintf("[%s]", net.IP(rawAddr).String())
 	default:
 		_ = req.Reply(ReplyAddressNotSupported)
 		return fmt.Errorf("unsupported address type 0x%02x", atyp)
 	}
-	var rawPort []byte
-	if rawPort, err = req.readBytes(2); err != nil {
+	var rawPort [2]byte
+	if _, err = req.readFull(rawPort[:]); err != nil {
 		_ = req.Reply(ReplyGeneralFailure)
 		return err
 	}
