@@ -27,7 +27,9 @@
 
 package socks5
 
-import "fmt"
+import (
+	"errors"
+)
 
 const (
 	authRFC1929Ver     = 0x01
@@ -36,12 +38,20 @@ const (
 )
 
 func (req *Request) authRFC1929() (err error) {
-	sendErrResp := func() {
-		// Swallow write/flush errors, the auth failure is the relevant error.
-		resp := []byte{authRFC1929Ver, authRFC1929Fail}
-		_, _ = req.rw.Write(resp[:])
-		_ = req.flushBuffers()
-	}
+	status := byte(authRFC1929Fail)
+	defer func() {
+		resp := []byte{authRFC1929Ver, status}
+		if _, ew := req.rw.Write(resp); err == nil {
+			if ew != nil {
+				err = ew
+			} else {
+				err = req.flushBuffers()
+			}
+		} else if ew == nil {
+			// Swallow write/flush errors, the auth failure is the relevant error
+			_ = req.flushBuffers()
+		}
+	}()
 
 	// The client sends a Username/Password request.
 	//  uint8_t ver (0x01)
@@ -50,56 +60,47 @@ func (req *Request) authRFC1929() (err error) {
 	//  uint8_t plen (>= 1)
 	//  uint8_t passwd[plen]
 
-	if err = req.readByteVerify("auth version", authRFC1929Ver); err != nil {
-		sendErrResp()
-		return
+	err = req.readByteVerify("auth version", authRFC1929Ver)
+	if err != nil {
+		return err
 	}
 
 	// Read the username.
-	var ulen byte
-	if ulen, err = req.readByte(); err != nil {
-		sendErrResp()
-		return
+	ulen, err := req.readByte()
+	if err != nil {
+		return err
 	} else if ulen < 1 {
-		sendErrResp()
-		return fmt.Errorf("username with 0 length")
+		return errors.New("username with 0 length")
 	}
-	var uname []byte
-	if uname, err = req.readBytes(int(ulen)); err != nil {
-		sendErrResp()
-		return
+	uname := make([]byte, ulen)
+	if _, err = req.readFull(uname); err != nil {
+		return err
 	}
 
 	// Read the password.
-	var plen byte
-	if plen, err = req.readByte(); err != nil {
-		sendErrResp()
-		return
+	plen, err := req.readByte()
+	if err != nil {
+		return err
 	} else if plen < 1 {
-		sendErrResp()
-		return fmt.Errorf("password with 0 length")
+		return errors.New("password with 0 length")
 	}
-	var passwd []byte
-	if passwd, err = req.readBytes(int(plen)); err != nil {
-		sendErrResp()
-		return
+	passwd := make([]byte, plen)
+	if _, err = req.readFull(passwd); err != nil {
+		return err
 	}
 
 	// Pluggable transports use the username/password field to pass
 	// per-connection arguments.  The fields contain ASCII strings that
 	// are combined and then parsed into key/value pairs.
-	argStr := string(uname)
 	if !(plen == 1 && passwd[0] == 0x00) {
 		// tor will set the password to 'NUL', if the field doesn't contain any
 		// actual argument data.
-		argStr += string(passwd)
+		uname = append(uname, passwd...)
 	}
-	if req.Args, err = parseClientParameters(argStr); err != nil {
-		sendErrResp()
-		return
+	if req.Args, err = parseClientParameters(string(uname)); err != nil {
+		return err
 	}
 
-	resp := []byte{authRFC1929Ver, authRFC1929Success}
-	_, err = req.rw.Write(resp[:])
-	return
+	status = authRFC1929Success
+	return nil
 }

@@ -231,10 +231,9 @@ func (req *Request) authenticate(method byte) error {
 	switch method {
 	case authNoneRequired:
 		// No authentication required.
+		return nil
 	case authUsernamePassword:
-		if err := req.authRFC1929(); err != nil {
-			return err
-		}
+		return req.authRFC1929()
 	case authNoAcceptableMethods:
 		return fmt.Errorf("no acceptable authentication methods")
 	default:
@@ -242,8 +241,6 @@ func (req *Request) authenticate(method byte) error {
 		// negotiated.
 		return fmt.Errorf("negotiated unsupported method 0x%02x", method)
 	}
-
-	return req.flushBuffers()
 }
 
 func (req *Request) readCommand() error {
