@@ -46,7 +46,7 @@ import (
 	"syscall"
 	"time"
 
-	"git.torproject.org/pluggable-transports/goptlib.git"
+	pt "git.torproject.org/pluggable-transports/goptlib.git"
 )
 
 const (
@@ -126,16 +126,15 @@ type Request struct {
 // appropriate errors if applicable, but will not close the connection.
 func Handshake(conn net.Conn) (*Request, error) {
 	// Arm the handshake timeout.
-	var err error
-	if err = conn.SetDeadline(time.Now().Add(requestTimeout)); err != nil {
+	err := conn.SetDeadline(time.Now().Add(requestTimeout))
+	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		// Disarm the handshake timeout, only propagate the error if
 		// the handshake was successful.
-		nerr := conn.SetDeadline(time.Time{})
-		if err == nil {
-			err = nerr
+		if e := conn.SetDeadline(time.Time{}); err == nil {
+			err = e
 		}
 	}()
 
@@ -339,7 +338,7 @@ func (req *Request) readByteVerify(descr string, expected byte) error {
 		return err
 	}
 	if val != expected {
-		return fmt.Errorf("message field '%s' was 0x%02x (expected 0x%02x)", descr, val, expected)
+		return fmt.Errorf("message field %q was 0x%02x (expected 0x%02x)", descr, val, expected)
 	}
 	return nil
 }
