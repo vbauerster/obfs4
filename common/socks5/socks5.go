@@ -344,14 +344,6 @@ func (req *Request) readByteVerify(descr string, expected byte) error {
 	return nil
 }
 
-func (req *Request) readBytes(n int) ([]byte, error) {
-	b := make([]byte, n)
-	if _, err := io.ReadFull(req.rw, b); err != nil {
-		return nil, err
-	}
-	return b, nil
-}
-
 func (req *Request) readFull(buf []byte) (int, error) {
 	return io.ReadFull(req.rw, buf)
 }
