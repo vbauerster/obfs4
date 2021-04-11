@@ -143,8 +143,8 @@ func Handshake(conn net.Conn) (*Request, error) {
 	req.rw = bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
 
 	// Negotiate the protocol version and authentication method.
-	var method byte
-	if method, err = req.negotiateAuth(); err != nil {
+	method, err := req.negotiateAuth()
+	if err != nil {
 		return nil, err
 	}
 
@@ -192,19 +192,19 @@ func (req *Request) negotiateAuth() (byte, error) {
 	//  uint8_t nmethods (>= 1).
 	//  uint8_t methods[nmethods]
 
-	var err error
-	if err = req.readByteVerify("version", version); err != nil {
+	err := req.readByteVerify("version", version)
+	if err != nil {
 		return 0, err
 	}
 
 	// Read the number of methods, and the methods.
-	var nmethods byte
 	method := byte(authNoAcceptableMethods)
-	if nmethods, err = req.readByte(); err != nil {
+	nmethods, err := req.readByte()
+	if err != nil {
 		return method, err
 	}
-	var methods []byte
-	if methods, err = req.readBytes(int(nmethods)); err != nil {
+	methods := make([]byte, nmethods)
+	if _, err = req.readFull(methods); err != nil {
 		return 0, err
 	}
 
@@ -355,4 +355,8 @@ func (req *Request) readBytes(n int) ([]byte, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+func (req *Request) readFull(buf []byte) (int, error) {
+	return io.ReadFull(req.rw, buf)
 }
