@@ -40,9 +40,11 @@ package socks5 // import "gitlab.com/yawning/obfs4.git/common/socks5"
 import (
 	"bufio"
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"syscall"
 	"time"
 
@@ -81,6 +83,12 @@ const (
 	ReplyCommandNotSupported
 	ReplyAddressNotSupported
 )
+
+var authFile string
+
+func init() {
+	flag.StringVar(&authFile, "auth", "", "path to auth file, for clients with no socks5 authentication support")
+}
 
 // Version returns a string suitable to be included in a call to Cmethod.
 func Version() string {
@@ -230,7 +238,21 @@ func (req *Request) negotiateAuth() (byte, error) {
 func (req *Request) authenticate(method byte) error {
 	switch method {
 	case authNoneRequired:
-		// No authentication required.
+		if authFile == "" {
+			return nil
+		}
+		f, err := os.Open(authFile)
+		if err != nil {
+			return fmt.Errorf("authNoneRequired: %s", err.Error())
+		}
+		defer f.Close()
+		ll, err := readLines(f, 1)
+		if err != nil {
+			return fmt.Errorf("authNoneRequired: %s", err.Error())
+		}
+		if req.Args, err = parseClientParameters(ll[0]); err != nil {
+			return fmt.Errorf("authNoneRequired: %s", err.Error())
+		}
 		return nil
 	case authUsernamePassword:
 		return req.authRFC1929()
