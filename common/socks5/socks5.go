@@ -44,7 +44,7 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
+	"sync"
 	"syscall"
 	"time"
 
@@ -84,7 +84,15 @@ const (
 	ReplyAddressNotSupported
 )
 
-var authFile string
+var (
+	authFile  string
+	authCache = struct {
+		sync.Mutex
+		auth  string
+		err   error
+		ready chan struct{}
+	}{}
+)
 
 func init() {
 	flag.StringVar(&authFile, "auth", "", "path to auth file, for clients with no socks5 authentication support")
@@ -241,16 +249,21 @@ func (req *Request) authenticate(method byte) error {
 		if authFile == "" {
 			return nil
 		}
-		f, err := os.Open(authFile)
+		authCache.Lock()
+		if authCache.ready == nil {
+			authCache.ready = make(chan struct{})
+			authCache.Unlock()
+			authCache.auth, authCache.err = readAuthFile(authFile)
+			close(authCache.ready)
+		} else {
+			authCache.Unlock()
+			<-authCache.ready
+		}
+		err := authCache.err
 		if err != nil {
 			return fmt.Errorf("authNoneRequired: %s", err.Error())
 		}
-		defer f.Close()
-		ll, err := readLines(f, 1)
-		if err != nil {
-			return fmt.Errorf("authNoneRequired: %s", err.Error())
-		}
-		if req.Args, err = parseClientParameters(ll[0]); err != nil {
+		if req.Args, err = parseClientParameters(authCache.auth); err != nil {
 			return fmt.Errorf("authNoneRequired: %s", err.Error())
 		}
 		return nil
