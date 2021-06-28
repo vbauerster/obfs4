@@ -38,6 +38,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"runtime"
 	"syscall"
 
 	pt "git.torproject.org/pluggable-transports/goptlib.git"
@@ -319,6 +320,7 @@ func getVersion() string {
 }
 
 func main() {
+	runtime.MemProfileRate = 0
 	// Initialize the termination state monitor as soon as possible.
 	termMon = newTermMonitor()
 
