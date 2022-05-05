@@ -39,6 +39,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"sync"
 	"syscall"
 
 	"git.torproject.org/pluggable-transports/goptlib.git"
@@ -271,38 +272,34 @@ func serverHandler(f base.ServerFactory, conn net.Conn, info *pt.ServerInfo) {
 	}
 }
 
-func copyLoop(a net.Conn, b net.Conn) error {
+func copyLoop(a, b net.Conn) error {
 	// Note: b is always the pt connection.  a is the SOCKS/ORPort connection.
-	errChan := make(chan error, 2)
+	errChan := make(chan error, 1)
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		defer b.Close()
-		defer a.Close()
-		_, err := io.Copy(b, a)
-		errChan <- err
-	}()
-	go func() {
-		defer wg.Done()
-		defer a.Close()
-		defer b.Close()
-		_, err := io.Copy(a, b)
-		errChan <- err
-	}()
-
-	// Wait for both upstream and downstream to close.  Since one side
-	// terminating closes the other, the second error in the channel will be
-	// something like EINVAL (though io.Copy() will swallow EOF), so only the
-	// first error is returned.
-	wg.Wait()
-	if len(errChan) > 0 {
-		return <-errChan
+	_copy := func(dst, src net.Conn) {
+		defer src.Close()
+		_, err := io.Copy(dst, src)
+		if err != nil {
+			select {
+			case errChan <- err:
+			default:
+			}
+		}
 	}
 
-	return nil
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		_copy(a, b)
+	}()
+
+	_copy(b, a)
+
+	wg.Wait()
+	close(errChan)
+	return <-errChan
 }
 
 func getVersion() string {
